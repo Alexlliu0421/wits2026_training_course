@@ -18,10 +18,10 @@ export const useCartStore = defineStore('cart', () => {
   // --- State ---
   const items = ref<CartItem[]>([])
   const isCheckingOut = ref(false)
-
+  // Fix bug
   // --- Getters ---
   const itemCount = computed(() =>
-    items.value.reduce((total, item) => total + item.quantity, 0)
+    items.value.reduce((total, item) => total + item.quantity.price*item.quantity, 0)
   )
 
   /**
