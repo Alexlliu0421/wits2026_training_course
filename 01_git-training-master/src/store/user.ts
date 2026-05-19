@@ -1,16 +1,15 @@
 // ================================================================
-// user.ts.theirs — 同事的修改版本（THEIRS）
+// user.ts.ours — 你的修改版本（OURS）
 //
-// 同事在 feature/login-attempt-limit 分支上的改動：
-// 為了強化安全性，加入登入錯誤次數統計，
-// 連續錯誤 5 次後鎖定帳號 30 分鐘。
+// 你在 feature/remember-me 分支上的改動：
+// 為 login() 加入 rememberMe 參數，
+// 讓使用者可以選擇將 token 存入 localStorage 保持登入狀態。
 //
 // 改動摘要：
-// 1. 新增 loginAttempts ref 追蹤失敗次數
-// 2. 新增 isLocked ref 與 lockUntil ref 追蹤鎖定狀態
-// 3. login() 在呼叫 API 前先檢查是否被鎖定
-// 4. 登入失敗時累加計數，達 5 次設定鎖定時間戳
-// 5. 登入成功後重置計數器
+// 1. login() 新增第三個參數 rememberMe: boolean = false
+// 2. 登入成功後，若 rememberMe 為 true，存入 localStorage
+// 3. logout() 加入清除 localStorage 的邏輯
+// 4. 新增 restoreSession() 函式，供頁面重整時呼叫
 // ================================================================
 
 import { defineStore } from 'pinia'
@@ -23,38 +22,18 @@ export const useUserStore = defineStore('user', () => {
   const isLoading = ref(false)
   const loginError = ref<string | null>(null)
 
-  // ← THEIRS 新增：錯誤次數追蹤狀態
-  const loginAttempts = ref(0)
-  const isLocked = ref(false)
-  const lockUntil = ref<number | null>(null)  // Unix timestamp (ms)
-
   const isAuthenticated = computed(() => !!token.value && !!currentUser.value)
   const isAdmin = computed(() => currentUser.value?.role === 'admin')
   const displayName = computed(() => currentUser.value?.username ?? '訪客')
 
-  // ← THEIRS 新增：計算剩餘鎖定秒數
-  const remainingLockSeconds = computed(() => {
-    if (!lockUntil.value) return 0
-    const remaining = Math.ceil((lockUntil.value - Date.now()) / 1000)
-    return Math.max(0, remaining)
-  })
-
   /**
-   * 使用者登入（THEIRS 加入了錯誤次數限制）
+   * 使用者登入（OURS 加入了 rememberMe 參數）
    */
-  async function login(email: string, password: string): Promise<boolean> {
-    // ← THEIRS 新增：鎖定檢查
-    if (isLocked.value) {
-      if (lockUntil.value && Date.now() < lockUntil.value) {
-        loginError.value = `帳號已鎖定，請 ${remainingLockSeconds.value} 秒後再試`
-        return false
-      }
-      // 鎖定時間到了，自動解鎖
-      isLocked.value = false
-      lockUntil.value = null
-      loginAttempts.value = 0
-    }
-
+  async function login(
+    email: string,
+    password: string,
+    rememberMe: boolean = false  // ← OURS 新增
+  ): Promise<boolean> {
     isLoading.value = true
     loginError.value = null
 
@@ -63,23 +42,18 @@ export const useUserStore = defineStore('user', () => {
 
       if (!response.success || !response.data) {
         loginError.value = response.message
-        loginAttempts.value++  // ← THEIRS 新增：錯誤計數
-
-        // ← THEIRS 新增：達 5 次鎖定 30 分鐘
-        if (loginAttempts.value >= 5) {
-          isLocked.value = true
-          lockUntil.value = Date.now() + 30 * 60 * 1000  // 30 分鐘
-          loginError.value = '錯誤次數過多，帳號已鎖定 30 分鐘'
-        }
         return false
       }
 
-      // ← THEIRS 新增：登入成功後重置計數
-      loginAttempts.value = 0
-      isLocked.value = false
-      lockUntil.value = null
+      const { accessToken, refreshToken } = response.data
+      token.value = accessToken
 
-      token.value = response.data.accessToken
+      // ← OURS 新增：remember me 邏輯
+      if (rememberMe) {
+        localStorage.setItem('auth_token', accessToken)
+        localStorage.setItem('refresh_token', refreshToken)
+      }
+
       await fetchCurrentUser()
       return true
     } catch (err) {
@@ -90,14 +64,13 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  // ← OURS 修改：logout 時清除 localStorage
   function logout(): void {
     currentUser.value = null
     token.value = null
     loginError.value = null
-    // ← THEIRS 新增：登出時重置鎖定狀態（管理員手動解鎖用）
-    loginAttempts.value = 0
-    isLocked.value = false
-    lockUntil.value = null
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('refresh_token')
   }
 
   async function fetchCurrentUser(): Promise<void> {
@@ -108,11 +81,19 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  // ← OURS 新增：從 localStorage 恢復登入狀態
+  function restoreSession(): void {
+    const savedToken = localStorage.getItem('auth_token')
+    if (savedToken) {
+      token.value = savedToken
+      fetchCurrentUser()
+    }
+  }
+
   return {
     currentUser, token, isLoading, loginError,
     isAuthenticated, isAdmin, displayName,
-    loginAttempts, isLocked, remainingLockSeconds,  // ← THEIRS 新增 export
-    login, logout, fetchCurrentUser
+    login, logout, fetchCurrentUser, restoreSession  // ← OURS 新增 restoreSession
   }
 })
 
